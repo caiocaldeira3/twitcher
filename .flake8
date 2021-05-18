@@ -5,7 +5,7 @@ ignore = ANN101, ANN102,
   S110, S112, S322,
   T400, T484, W504
 
-max-line-length = 88
+max-line-length = 100
 
 per-file-ignores =
   tests/test_*.py: S101
