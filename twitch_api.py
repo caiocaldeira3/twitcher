@@ -1,8 +1,8 @@
 import dotenv
+import fileinput
 import json
 import os
 import requests
-import websockets
 
 import dataclasses as dc
 import regex as re
@@ -10,9 +10,10 @@ import regex as re
 from pathlib import Path
 
 base_path = Path(__file__).resolve().parent
-dotenv.load_dotenv(base_path / ".env", override=False)
 
-user_regex = re.compile(r"^.*?(?=\!|\.tmi\.twitch\.tv)")
+import twitch_chat
+
+dotenv.load_dotenv(base_path / ".env", override=False)
 
 @dc.dataclass(init=True, repr=True)
 class TwitchApi:
@@ -66,9 +67,15 @@ class TwitchApi:
 
         self.print_response(response)
 
-        # Currently not Working
-        os.environ["CHAT_ACCESS"] = response.json()["access_token"]
-        os.environ["CHAT_REFRESH"] = response.json()["refresh_token"]
+        self._update_enviroment("CHAT_ACCESS", response.json()["access_token"])
+        self._update_enviroment("CHAT_REFRESH", response.json()["refresh_token"])
+
+    def _update_enviroment (self, key: str, value: str) -> None:
+        environ_regex = re.compile(f"(?<={key}=).*")
+
+        with fileinput.FileInput(".env", inplace=True, backup=".bak") as env:
+            for line in env:
+                print(environ_regex.sub(f"\"{value}\"", line), end="")
 
     def validate (self) -> None:
         url = "https://id.twitch.tv/oauth2/validate"
@@ -86,38 +93,16 @@ class TwitchApi:
 
         self.print_response(response)
 
-        # Currently not Working
-        os.environ["CHAT_ACCESS"] = response.json()["access_token"]
-        os.environ["CHAT_REFRESH"] = response.json()["refresh_token"]
+        self._update_enviroment("CHAT_ACCESS", response.json()["access_token"])
+        self._update_enviroment("CHAT_REFRESH", response.json()["refresh_token"])
 
-    async def connect_chat (self, channel: str) -> None:
+    async def get_chat (self, channel: str = None) -> None:
+        if channel is None:
+            channel = self.nick
 
-        url = "wss://irc-ws.chat.twitch.tv:443"
-        async with websockets.connect(url) as chat_socket:
-            await chat_socket.send(f"PASS oauth:{os.environ['CHAT_ACCESS']}\r\n")
-            await chat_socket.send(f"NICK {self.nick}\r\n")
-            await chat_socket.send(f"JOIN #{channel}\r\n")
+        twt_chat = twitch_chat.TwitchChat(self.nick, channel, os.environ["CHAT_ACCESS"])
 
-            while True:
-                message = await chat_socket.recv()
-
-                buffer = message.split(":")
-                if "PING" in buffer[0]:
-                    await chat_socket.send("PONG :tmi.twitch.tv\r\n")
-                    continue
-
-                context = buffer[1].split(" ")
-                action = context[1]
-                user = user_regex.match(context[0])
-
-                if action == "PART":
-                    continue
-                elif action == "JOIN":
-                    continue
-                elif action == "PRIVMSG":
-                    print(f"{user.group()}: {''.join(buffer[ 2 : ])}", end="")
-                else:
-                    continue
+        await twt_chat.run()
 
     def get_response (self, query: str) -> any:
         url = self.base_url + query
