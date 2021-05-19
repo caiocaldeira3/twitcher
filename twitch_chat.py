@@ -8,6 +8,7 @@ import tkinter as tk
 import regex as re
 
 user_regex = re.compile(r"^.*?(?=\!|\.tmi\.twitch\.tv)")
+color_regex = re.compile(r"(?<=color=)#.*?(?=;)")
 
 @dc.dataclass(init=True, repr=False)
 class TwitchChat:
@@ -29,6 +30,8 @@ class TwitchChat:
     text_widget: tk.Text = dc.field(init=False)
     msg_entry: tk.Entry = dc.field(init=False)
 
+    known_users: set = dc.field(init=False, default_factory=set)
+
     def __post_init__ (self) -> None:
         self.window.title(f"Twitch Chat - {self.channel}")
         self.window.resizable(width=True, height=True)
@@ -40,6 +43,11 @@ class TwitchChat:
             font=self.FONT, padx=5, pady=8, spacing1=0, spacing2=1, spacing3=3
         )
         self.text_widget.place(relheight=0.970, relwidth=1)
+
+        # Adding Default User Tag
+        self.text_widget.tag_config(
+            "DEFAULT_USER", font=self.FONT + " bold", foreground=self.TEXT_COLOR
+        )
 
         # Bottom Label
         bottom_label = tk.Label(self.window, bg=self.BG_COLOR, height=20)
@@ -62,11 +70,11 @@ class TwitchChat:
 
     def event_handler (self) -> None:
         try:
-            user, msg = self.receive_queue.get(block=False)
+            user, msg, color = self.receive_queue.get(block=False)
         except queue.Empty:
             pass
         else:
-            self._insert_message(user, msg)
+            self._insert_message(user, msg, color)
 
         self.window.after(100, self.event_handler)
 
@@ -80,6 +88,7 @@ class TwitchChat:
             await chat_socket.send(f"PASS oauth:{self.auth_access}\r\n")
             await chat_socket.send(f"NICK {self.nick}\r\n")
             await chat_socket.send(f"JOIN #{self.channel}\r\n")
+            await chat_socket.send("CAP REQ :twitch.tv/tags\r\n")
 
             while True:
                 consumer_task = asyncio.ensure_future(
@@ -97,6 +106,7 @@ class TwitchChat:
 
     async def receive_message (self, chat_socket: object) -> None:
         message = await chat_socket.recv()
+
         print(message)
 
         buffer = message.split(":")
@@ -106,14 +116,19 @@ class TwitchChat:
 
         context = buffer[1].split(" ")
         action = context[1]
-        user = user_regex.match(context[0])
+
+        user = user_regex.search(context[0])
+        user = user.group() if user is not None else None
+
+        color = color_regex.search(buffer[0])
+        color = color.group() if color is not None else None
 
         if action == "PART":
             return
         elif action == "JOIN":
             return
         elif action == "PRIVMSG":
-            self.receive_queue.put(("".join(buffer[ 2 : ]), user.group()))
+            self.receive_queue.put(("".join(buffer[ 2 : ]), user, color))
         else:
             return
 
@@ -135,14 +150,22 @@ class TwitchChat:
 
         self.send_queue.put(message)
 
-    def _insert_message(self, raw_msg: str, sender: str) -> None:
+    def _insert_message(self, raw_msg: str, sender: str, color: str = None) -> None:
         if raw_msg == "":
             return
-        full_msg = f"{sender}: {raw_msg}"
+        if color is not None:
+            self.text_widget.tag_config(sender, font=self.FONT + " bold", foreground=color)
+
+            self.known_users.add(sender)
+            tag = sender
+        else:
+            tag = "DEFAULT_USER"
 
         self.text_widget.configure(state=tk.NORMAL)
 
-        self.text_widget.insert(tk.END, full_msg)
+        self.text_widget.insert(tk.END, f"{sender}", tag)
+        self.text_widget.insert(tk.END, f": {raw_msg}")
+
         self.text_widget.configure(state=tk.DISABLED)
 
         self.text_widget.see(tk.END)

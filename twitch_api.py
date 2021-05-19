@@ -37,7 +37,7 @@ class TwitchApi:
         }
 
         # self._authenticate_user()
-        # self.refresh_user()
+        self.refresh_user()
 
     def authenticate_client (self) -> None:
         url = (
