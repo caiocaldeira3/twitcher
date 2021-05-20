@@ -7,8 +7,10 @@ import dataclasses as dc
 import tkinter as tk
 import regex as re
 
-user_regex = re.compile(r"^.*?(?=\!|\.tmi\.twitch\.tv)")
-color_regex = re.compile(r"(?<=color=)#.*?(?=;)")
+context_regex = re.compile(
+    r"(^@.*badges=(.*?);.*color=(.*?);.*emotes=(.*?);.*?):" +
+    r"((.*?)!\6@\6\.tmi\.twitch\.tv (.*?) (.*?)) :(.*)"
+)
 
 @dc.dataclass(init=True, repr=False)
 class TwitchChat:
@@ -70,13 +72,13 @@ class TwitchChat:
 
     def event_handler (self) -> None:
         try:
-            user, msg, color = self.receive_queue.get(block=False)
+            msg, user, kwargs = self.receive_queue.get(block=False)
         except queue.Empty:
             pass
         else:
-            self._insert_message(user, msg, color)
+            self._insert_message(msg, user, **kwargs)
 
-        self.window.after(100, self.event_handler)
+        self.window.after(150, self.event_handler)
 
     def irc_handler (self) -> None:
         asyncio.run(self._irc_handler())
@@ -114,23 +116,39 @@ class TwitchChat:
             await chat_socket.send("PONG :tmi.twitch.tv\r\n")
             return
 
-        context = buffer[1].split(" ")
-        action = context[1]
+        parsed_message = context_regex.match(message)
 
-        user = user_regex.search(context[0])
-        user = user.group() if user is not None else None
+        try:
+            tags = parsed_message.group(1)
+            context = parsed_message.group(5)
 
-        color = color_regex.search(buffer[0])
-        color = color.group() if color is not None else None
+            action = parsed_message.group(7)
 
-        if action == "PART":
-            return
-        elif action == "JOIN":
-            return
-        elif action == "PRIVMSG":
-            self.receive_queue.put(("".join(buffer[ 2 : ]), user, color))
-        else:
-            return
+            if action == "PART":
+                return
+            elif action == "JOIN":
+                return
+            elif action == "PRIVMSG":
+                user = parsed_message.group(6)
+
+                kwargs = {}
+                if parsed_message.group(3) != "":
+                    kwargs["color"] = parsed_message.group(3)
+
+                if parsed_message.group(2) != "":
+                    kwargs["badges"] = parsed_message.group(2)
+
+                if parsed_message.group(4) != "":
+                    kwargs["emotes"] = parsed_message.group(4)
+
+                txt = parsed_message.group(9)
+
+                self.receive_queue.put((txt, user, kwargs))
+            else:
+                return
+
+        except Exception:
+            print("Message not parsed")
 
     async def send_message (self, chat_socket: object, message: str = None) -> None:
         if message is not None:
@@ -139,7 +157,7 @@ class TwitchChat:
         try:
             message = self.send_queue.get(block=False)
         except queue.Empty:
-            await asyncio.sleep(100)
+            await asyncio.sleep(150)
         else:
             await chat_socket.send(f"PRIVMSG #{self.channel} :{message}\r\n")
             self._insert_message(message + '\n', self.nick)
@@ -150,7 +168,9 @@ class TwitchChat:
 
         self.send_queue.put(message)
 
-    def _insert_message(self, raw_msg: str, sender: str, color: str = None) -> None:
+    def _insert_message(
+        self, raw_msg: str, sender: str, color: str = None, emotes: str = None, badges: str = None
+    ) -> None:
         if raw_msg == "":
             return
         if color is not None:
@@ -164,7 +184,7 @@ class TwitchChat:
         self.text_widget.configure(state=tk.NORMAL)
 
         self.text_widget.insert(tk.END, f"{sender}", tag)
-        self.text_widget.insert(tk.END, f": {raw_msg}")
+        self.text_widget.insert(tk.END, f": {raw_msg}\n")
 
         self.text_widget.configure(state=tk.DISABLED)
 

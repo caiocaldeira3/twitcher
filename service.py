@@ -5,7 +5,7 @@ from twitch_api import TwitchApi
 
 if __name__ == "__main__":
 
-    # try:
+    try:
         twitch = TwitchApi()
 
         if len(sys.argv) < 2:
@@ -13,5 +13,5 @@ if __name__ == "__main__":
         else:
             asyncio.run(twitch.get_chat(sys.argv[1]))
 
-    # except (Exception):
-    #     print("Api not loaded")
+    except (Exception):
+        print("Api not loaded")
